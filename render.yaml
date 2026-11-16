@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: tablo-igry
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    envVars:
+      - key: TABLO_SALT
+        sync: false
+      - key: ADMIN_TOKEN
+        generateValue: true
