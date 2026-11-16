@@ -30,7 +30,7 @@ def load(c):
 
 def snapshot(tables): return {str(r['stol']): [r['rank'], r['points']] for r in g.rank(tables)}
 
-def apply_text(text, final=None, admin=False, replace=False):
+def apply_text(text, final=None, admin=False, replace=False, reset=False):
     """Разбирает строки «ЗАПИСЬ» движка и вливает их в счёт. Две сдачи одного стола с разных ноутбуков не затирают друг друга."""
     tables, game, bad = g.parse(text)
     if not tables and not game and not admin and not replace:
@@ -40,6 +40,12 @@ def apply_text(text, final=None, admin=False, replace=False):
         cur = load(c)
         changed = False
         byid = {t['stol']: t for t in cur}
+        if reset:
+            # /сброс на стенде: новая игра с чистого листа
+            if byid: changed = True
+            byid = {}
+            c.execute("delete from meta where key in ('game','prev')")
+            meta_set(c, 'mode', 'tablo')
         if replace:
             # снимок с /табло: на сайте остаются только столы, которые есть в памяти пространства на стенде
             keep = {t['stol'] for t in tables}
@@ -135,7 +141,7 @@ async def push(req: Request):
         replace = g.snapshot_ok(j.get('snapshot', ''))
     except Exception:
         pass
-    res = apply_text(text, final=bool(final) if final is not None else None, replace=replace)
+    res = apply_text(text, final=bool(final) if final is not None else None, replace=replace, reset=replace and bool(j.get('reset')))
     return JSONResponse(res, status_code=200 if res['ok'] else 400)
 
 @app.post('/api/reset')
