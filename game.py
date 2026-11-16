@@ -46,6 +46,13 @@ def parse(text):
             bad += 1
     return tables, game, bad
 
+SNAPSHOT = re.compile(r'SNAPSHOT\|(\d{9,11})\|([0-9a-f]{8})')
+
+def snapshot_ok(text, window=900):
+    """Подписанный движком снимок с /табло: свежий (±15 минут) и с верной подписью."""
+    m = SNAPSHOT.search(str(text or ''))
+    return bool(SALT and m and m.group(2) == sig('snapshot', m.group(1)) and abs(int(m.group(1)) - time.time()) < window)
+
 def fmt(h): return ('%.1f' % h).rstrip('0').rstrip('.').replace('.', ',')
 def pl(n, a, b, c):
     n = abs(int(n)); return a if n % 10 == 1 and n % 100 != 11 else b if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else c

@@ -30,16 +30,21 @@ def load(c):
 
 def snapshot(tables): return {str(r['stol']): [r['rank'], r['points']] for r in g.rank(tables)}
 
-def apply_text(text, final=None, admin=False):
+def apply_text(text, final=None, admin=False, replace=False):
     """Разбирает строки «ЗАПИСЬ» движка и вливает их в счёт. Две сдачи одного стола с разных ноутбуков не затирают друг друга."""
     tables, game, bad = g.parse(text)
-    if not tables and not game and not admin:
+    if not tables and not game and not admin and not replace:
         return dict(ok=False, error='не найдено ни одной строки движка с верной подписью', rejected=bad)
     with LOCK:
         c = db()
         cur = load(c)
         changed = False
         byid = {t['stol']: t for t in cur}
+        if replace:
+            # снимок с /табло: на сайте остаются только столы, которые есть в памяти пространства на стенде
+            keep = {t['stol'] for t in tables}
+            if set(byid) - keep: changed = True
+            byid = {k: v for k, v in byid.items() if k in keep}
         for t in tables:
             old = byid.get(t['stol'])
             if old:
@@ -54,6 +59,7 @@ def apply_text(text, final=None, admin=False):
             byid[t['stol']] = new
         if changed:
             meta_set(c, 'prev', snapshot(cur))
+            c.execute('delete from tables')
             for t in byid.values():
                 c.execute('insert or replace into tables values(?,?,?,?,?)', (t['stol'], t['name'], t['t0'], json.dumps(t['tasks']), time.time()))
         if game:
@@ -119,12 +125,17 @@ def api_state():
 async def push(req: Request):
     check(req, PUSH_TOKEN)
     raw = (await req.body()).decode('utf-8', 'replace')
-    final = None
+    final, j = None, {}
     try:
         j = json.loads(raw); text = j.get('zapis') or j.get('text') or ''; final = j.get('final')
     except Exception:
         text = raw
-    res = apply_text(text, final=bool(final) if final is not None else None)
+    replace = False
+    try:
+        replace = g.snapshot_ok(j.get('snapshot', ''))
+    except Exception:
+        pass
+    res = apply_text(text, final=bool(final) if final is not None else None, replace=replace)
     return JSONResponse(res, status_code=200 if res['ok'] else 400)
 
 @app.post('/api/reset')
@@ -197,6 +208,21 @@ def mcp_delete(): return Response(status_code=204)
 
 @app.get('/mcp')
 def mcp_get(): return Response(status_code=405)
+
+ADMIN_PAGE = '''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ведущему · табло</title><link rel="stylesheet" href="/static/igra.css"><style>
+.box{max-width:640px;margin:2rem auto;display:flex;flex-direction:column;gap:.9rem}.box input{font:inherit;padding:.7rem 1rem;border-radius:1rem;border:1px solid var(--n2)}
+.box button{font:inherit;padding:.75rem 1.1rem;border-radius:99px;border:0;background:var(--tx);color:#fff;cursor:pointer}.box button.l{background:var(--n1);color:var(--tx)}
+.row2{display:flex;gap:.6rem;flex-wrap:wrap}#msg{color:var(--tx2);min-height:1.3em}</style></head>
+<body><div class="box"><span class="logo"></span><h1 style="font-size:2rem">Ведущему</h1>
+<p class="eye">Токен — переменная ADMIN_TOKEN в настройках сервиса на Render (Environment).</p>
+<input id="tok" type="password" placeholder="ADMIN_TOKEN" autocomplete="off">
+<div class="row2"><button onclick="go('/api/reset',{})">Очистить табло</button><button class="l" onclick="go('/api/mode',{final:true})">Показать итоги</button><button class="l" onclick="go('/api/mode',{final:false})">Вернуть табло</button></div>
+<p id="msg"></p><p><a href="/">Открыть табло</a> · <a href="/final">Итоги</a></p></div>
+<script>async function go(u,b){const m=document.getElementById('msg');m.textContent='…';try{const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+document.getElementById('tok').value},body:JSON.stringify(b)});m.textContent=r.ok?'Готово':(r.status===401?'Неверный токен':'Ошибка '+r.status);}catch(e){m.textContent='Нет связи'}}</script></body></html>'''
+
+@app.get('/admin', response_class=HTMLResponse)
+def admin(): return ADMIN_PAGE
 
 @app.get('/healthz')
 def health(): return dict(ok=True)
