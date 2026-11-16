@@ -81,6 +81,11 @@ def check(req, token):
     if token and req.headers.get('authorization', '') != 'Bearer ' + token:
         raise HTTPException(401, 'нужен токен')
 
+def check_admin(req):
+    if not ADMIN_TOKEN:
+        raise HTTPException(403, 'ADMIN_TOKEN не задан на сервере')
+    check(req, ADMIN_TOKEN)
+
 PAGE = '''<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Табло · Рабочий день за 60 минут</title><link rel="stylesheet" href="/static/igra.css">
 <style>html{font-size:clamp(13px,.95vw + 4.6px,26px)}#app{min-height:100vh}.empty{padding:3rem 1rem;text-align:center;color:var(--tx2);border-radius:1.4rem;background:var(--n1)}
@@ -124,14 +129,14 @@ async def push(req: Request):
 
 @app.post('/api/reset')
 def reset(req: Request):
-    check(req, ADMIN_TOKEN or 'не-задан')
+    check_admin(req)
     with LOCK:
         c = db(); c.execute('delete from tables'); c.execute('delete from meta'); c.commit(); c.close()
     return dict(ok=True)
 
 @app.post('/api/mode')
 async def mode(req: Request):
-    check(req, ADMIN_TOKEN or 'не-задан')
+    check_admin(req)
     j = await req.json()
     return apply_text('', final=bool(j.get('final')), admin=True)
 
