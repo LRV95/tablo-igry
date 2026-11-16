@@ -1,6 +1,6 @@
 # Табло игры «Рабочий день за 60 минут»: принимает подписанные строки движка со стенда GigaCowork
 # (обычным POST или через MCP) и показывает рейтинг столов и итоги на отдельной странице.
-import json, os, sqlite3, threading, time
+import json, os, sqlite3, threading, time, uuid
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -182,7 +182,18 @@ async def mcp(req: Request):
     out = [r for r in map(handle_rpc, body if isinstance(body, list) else [body]) if r is not None]
     if not out:
         return Response(status_code=202)
-    return JSONResponse(out if isinstance(body, list) else out[0])
+    payload = json.dumps(out if isinstance(body, list) else out[0], ensure_ascii=False)
+    headers = {}
+    first = body[0] if isinstance(body, list) and body else body
+    if isinstance(first, dict) and first.get('method') == 'initialize':
+        headers['Mcp-Session-Id'] = uuid.uuid4().hex
+    # клиенты Streamable HTTP, которые просят поток, получают ответ одним событием SSE
+    if 'text/event-stream' in req.headers.get('accept', ''):
+        return Response('event: message\ndata: ' + payload + '\n\n', media_type='text/event-stream', headers=headers)
+    return Response(payload, media_type='application/json', headers=headers)
+
+@app.delete('/mcp')
+def mcp_delete(): return Response(status_code=204)
 
 @app.get('/mcp')
 def mcp_get(): return Response(status_code=405)
